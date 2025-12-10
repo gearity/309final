@@ -1,0 +1,182 @@
+---
+title: "STA309 Final"
+author: "Jacob Gearity"
+date: "2025-12-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Bringing In The Data**
+```{r, warning=FALSE}
+library(tidyverse)
+library(patchwork)
+NBA <- read.csv("C:/Users/jacob/Downloads/nba2025.csv")
+head(NBA)
+```
+
+**My dataset is Basketball Reference's publicly available 2024-2025 NBA season team Per Game data. It has more than 300 observations, and more than 5 variables. It contains one categorical variables: whether on not teams made the playoffs, which is a yes/no outcome, which is my created playoff status variable, and it contains many numeric variables. The variables in this dataset are common basketball statistics, like points, rebounds, and assists, on a per team, per game basis. It can be found here: https://www.basketball-reference.com/leagues/NBA_2025.html#per_game-team**
+
+**As part of my data cleaning, I plan to introduce my response variable "Playoff Wins." It will be denoted "PW" in the data. This is my measure of success, and it is numeric. Playoff wins can range from 0 (which means that team didn't make the playoffs, or were swept in the playoffs) to 16, which means that team won the NBA Finals. I'll also fix some formatting issues with column titles, and remove irrelvant columns. From what I can tell, R column names cannot start with a number, so the 3P column is named X3P, the 2P column is named X2P, etc. Percentage signs have also been replaced with periods.  **
+```{r}
+NBA <- NBA[-31, ]  #Removed row 31, which was the League Average
+NBA$PW <- c(5,0,7,16,0,0,15,6,10,0,1,2,9,3,0,0,5,0,1,3,0,0,0,0,0,0,0,1,0,0) #Created Playoff Wins
+NBA <- NBA %>%
+  mutate(PlayoffStatus = if_else(PW > 0, "Made Playoffs", "Missed Playoffs"))
+```
+
+```{r}
+#PTS vs Playoff Wins
+p_pts <- NBA %>%
+  ggplot(aes(x = PTS, y = PW, color = PlayoffStatus)) +
+  geom_point(size = 2, alpha = 0.8) +
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_minimal() +
+  labs(title = "Points per Game vs Playoff Wins",
+       x = "Points per Game", y = "Playoff Wins",
+       color = "Playoff Status")
+
+#TRB vs Playoff Wins
+p_trb <- NBA %>%
+  ggplot(aes(x = TRB, y = PW, color = PlayoffStatus)) +
+  geom_point(size = 2, alpha = 0.8) +
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_minimal() +
+  labs(title = "Rebounds per Game vs Playoff Wins",
+       x = "Total Rebounds per Game", y = "Playoff Wins",
+       color = "Playoff Status")
+
+#3PA vs Playoff Wins
+p_3pa <- NBA %>%
+  ggplot(aes(x = X3PA, y = PW, color = PlayoffStatus)) +
+  geom_point(size = 2, alpha = 0.8) +
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_minimal() +
+  labs(title = "3-Point Attempts vs Playoff Wins",
+       x = "3-Point Attempts per Game", y = "Playoff Wins",
+       color = "Playoff Status")
+
+#FTA vs Playoff Wins
+p_fta <- NBA %>%
+  ggplot(aes(x = FTA, y = PW, color = PlayoffStatus)) +
+  geom_point(size = 2, alpha = 0.8) +
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_minimal() +
+  labs(title = "Free Throw Attempts vs Playoff Wins",
+       x = "Free Throw Attempts per Game", y = "Playoff Wins",
+       color = "Playoff Status")
+
+#Boxplots of all
+NBA_long <- NBA %>%
+  select(PlayoffStatus, PTS, TRB, X3PA, FTA, STL) %>%
+  pivot_longer(cols = c(PTS, TRB, X3PA, FTA, STL),
+  names_to = "Stat", values_to = "Value")
+
+p_box <- NBA_long %>%
+  ggplot(aes(x = PlayoffStatus, y = Value, fill = PlayoffStatus)) +
+  geom_boxplot(alpha = 0.7, show.legend = FALSE) +
+  facet_wrap(~ Stat, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "Distribution of Key Stats by Playoff Status",
+       x = "Playoff Status", y = "Value")
+
+dashboard <- (p_pts | p_trb) /
+  (p_3pa | p_fta) / p_box +
+  plot_layout(guides = "collect",
+              heights = c(1, 1, 6)) +
+  plot_annotation(title = "Dashboard: Predicting Playoff Wins from Team Stats") &
+  theme(legend.position = "bottom",
+        plot.title = element_text(size = 11),
+        axis.title = element_text(size = 9),
+        axis.text  = element_text(size = 8))
+
+
+dashboard
+
+```
+
+
+**Annotation: The results of these predictors on playoff success is interesting. Points per game has a clear positive impact on playoff wins, while free throw attempts have a strong negative impact. Rebounds and 3-Point attempts have a small negative impact, but not enough to be notable. The trends we see as far as free throw attempts hurting playoff success likely has to do with NBA referee's tendencies to call fewer fouls in the playoffs: teams which rely on free throws to score suddenly get fewer chances to do so. **
+
+**Models**
+```{r, warning=FALSE}
+library(tidyverse)
+library(caret)
+library(rpart)
+library(randomForest)
+library(elasticnet)
+set.seed(123)
+
+NBA_model <- NBA %>%
+  select(PW, PTS, TRB, X3PA, FTA, STL) #i reused the same variables for convenience
+
+ctrl <- trainControl(method = "cv", number = 5)
+```
+
+```{r}
+#Multiple Linear Regression Model
+#I chose this model because it uses all predictors and captures a  linear relationship.
+
+lm_model <- train(PW ~ PTS + TRB + X3PA + FTA + STL,
+  data = NBA_model, method = "lm", trControl = ctrl)
+
+lm_model
+```
+
+```{r}
+#Lasso Model
+#I chose this model because it selects the most important variable
+
+lasso_model <- train(
+  PW ~ ., 
+  data = NBA_model,
+  method = "lasso",
+  trControl = ctrl)
+lasso_model
+```
+
+```{r, warning=FALSE}
+#Regression Tree Model
+#i chose this model because it looks for nonlinear relationships, which i hadn't checked yet
+tree_model <- train(PW ~ PTS + TRB + X3PA + FTA + STL,
+  data = NBA_model, method = "rpart", trControl = ctrl, tuneLength = 10)
+
+tree_model
+```
+
+```{r}
+#Random Forest Model
+#I chose this model because it does what a regression tree does, but more accurately
+rf_model <- train(PW ~ PTS + TRB + X3PA + FTA + STL,
+  data = NBA_model, method = "rf", trControl = ctrl, tuneLength = 10)
+
+rf_model
+```
+
+```{r, warning=FALSE}
+#k-Nearest Neighbors Model
+#I chose this model because it looks for relationships in a completely different way
+knn_model <- train(PW ~ PTS + TRB + X3PA + FTA + STL,
+  data = NBA_model, method = "knn", trControl = ctrl, tuneLength = 10)
+
+knn_model
+```
+
+**Model Comparison**
+
+```{r}
+results <- resamples(list(
+    LM = lm_model,
+    LASSO = lasso_model,
+    TREE = tree_model,
+    RF = rf_model,
+    KNN = knn_model))
+
+summary(results)
+bwplot(results) 
+dotplot(results)
+```
+
+**Model Findings: Using MAE, RMSE, and R^2 averages, I found that different models performed better in different categories for predicting NBA playoff success. For RMSE and R^2, the LM model was the best: it had the lowest mean RMSE score, and the higher mean R^2 score. For MAE, the TREE model was the best, with the lowest mean score. However, if we were to go off median, the results change: LM wins MAE, KNN wins RMSE, and LASSO wins R^2. The worst overall model was RF, which won no categories and generally sat in the lower end of each. The implication of this prediction is that a linear model does the best job at predicting NBA playoff success overall.**
